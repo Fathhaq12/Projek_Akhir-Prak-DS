@@ -1,0 +1,268 @@
+---
+title: "project"
+author: "123220213_123220140_123220212"
+date: "2024-12-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Mengimpor library yang diperlukan
+library(dslabs)
+library(tidymodels)
+library(tidyverse)
+library(here)
+library(vroom)
+library(shiny)
+
+# Menentukan path dataset
+path = here("data-raw", "movies.csv")  # Gantilah dengan path dataset yang sesuai
+movies_data = vroom(path)
+
+# Melihat struktur dataset
+glimpse(movies_data)
+View(movies_data)
+
+```
+
+
+```{r}
+# Mengisi nilai yang hilang dengan rata-rata untuk kolom numerik
+movies_data$Gross[is.na(movies_data$Gross)] = mean(movies_data$Gross, na.rm = TRUE)
+movies_data$Budget[is.na(movies_data$Budget)] = mean(movies_data$Budget, na.rm = TRUE)
+movies_data$Ratings[is.na(movies_data$Ratings)] = mean(movies_data$Ratings, na.rm = TRUE)
+movies_data$Views[is.na(movies_data$Views)] = mean(movies_data$Views, na.rm = TRUE)
+movies_data$Likes[is.na(movies_data$Likes)] = mean(movies_data$Likes, na.rm = TRUE)
+movies_data$Dislikes[is.na(movies_data$Dislikes)] = mean(movies_data$Dislikes, na.rm = TRUE)
+movies_data$Comments[is.na(movies_data$Comments)] = mean(movies_data$Comments, na.rm = TRUE)
+movies_data$`Aggregate Followers`[is.na(movies_data$`Aggregate Followers`)] = mean(movies_data$`Aggregate Followers`, na.rm = TRUE)
+# Mengisi nilai NA di kolom Screens dengan rata-rata
+movies_data$Screens[is.na(movies_data$Screens)] <- mean(movies_data$Screens, na.rm = TRUE)
+
+
+# Melihat data setelah preprocessing
+View(movies_data)
+
+```
+
+
+```{r}
+# Memilih kolom numerik yang relevan untuk clustering
+movies_data_productivity = movies_data %>%
+  select(-Movie, -Year, -Genre, -Sentiment)  #    Menghapus kolom yang tidak relevan
+
+```
+
+```{r}
+# Menormalkan data untuk clustering
+movies_data_scaled = movies_data_productivity %>%
+  scale()
+
+# Menampilkan data yang sudah dinormalisasi
+head(movies_data_scaled)
+
+```
+
+
+```{r}
+# Menetapkan seed untuk reprodusibilitas
+set.seed(123)
+
+# Menerapkan K-means clustering dengan 3 cluster
+kmeans_result = kmeans(movies_data_scaled, centers = 3, nstart = 50)
+
+# Menambahkan hasil cluster ke data asli
+movies_data_productivity$cluster = as.factor(kmeans_result$cluster)
+
+# Melihat data dengan label cluster
+View(movies_data_productivity)
+
+```
+
+
+```{r}
+# Menghitung WSS untuk berbagai nilai k
+wss = sapply(1:10, function(k) {
+  set.seed(123)
+  kmeans(movies_data_scaled, centers = k, nstart = 50)$tot.withinss
+})
+
+# Membuat data frame untuk plotting
+elbow_data = data.frame(k = 1:10, wss = wss)
+
+# Plot Elbow Method
+ggplot(data = elbow_data, aes(x = k, y = wss)) + 
+  geom_line(color = "green", linewidth = 2) + 
+  geom_point(color = "orange", size = 3) + 
+  labs(title = "Elbow Method untuk Menentukan k Optimal",
+       x = "Jumlah Cluster (k)", 
+       y = "Total Within-Cluster Sum of Squares (WSS)")
+
+```
+
+
+```{r}
+# Visualisasi hasil clustering
+ggplot(data = movies_data_productivity, aes(x = Gross, y = Budget, color = cluster)) + 
+  geom_point(size = 3) + 
+  labs(title = "Clustering Film Berdasarkan Gross dan Budget",
+       x = "Gross", y = "Budget")
+
+```
+
+
+```{r}
+# Menghitung statistik deskriptif per cluster
+cluster_summary <- movies_data_productivity %>%
+  group_by(cluster) %>%
+  summarise(
+    avg_Gross = mean(Gross),
+    avg_Budget = mean(Budget),
+    avg_Ratings = mean(Ratings),
+    avg_Views = mean(Views),
+    avg_Likes = mean(Likes),
+    avg_Dislikes = mean(Dislikes),
+    avg_Comments = mean(Comments),
+    avg_Aggregate_Followers = mean(`Aggregate Followers`)
+  )
+
+# Menampilkan ringkasan statistik per cluster
+cluster_summary
+
+```
+
+```{r}
+# Menambahkan library shinythemes untuk tema
+library(shinythemes)
+
+ui <- fluidPage(
+  theme = shinytheme("cerulean"),  # Menggunakan tema cerulean untuk tampilan yang lebih menarik
+  
+  # Title Panel
+  titlePanel(h1("Clustering Film Berdasarkan Gross dan Budget", align = "center")),
+  hr(),  # Garis horizontal untuk pemisah
+  
+  # Bagian untuk plot Elbow Method
+  fluidRow(
+    column(12, 
+      h3("Elbow Method untuk Menentukan k Optimal", align = "center"),
+      plotOutput("plot", height = "400px"),
+      p("Gunakan Elbow Method untuk menemukan jumlah cluster yang optimal.", align = "center")
+    )
+  ),
+  
+  hr(),  # Garis horizontal
+  
+  # Bagian untuk input k dan melatih model
+  fluidRow(
+    column(6, offset = 3,
+      wellPanel(
+        h4("Masukkan Jumlah Cluster (k)", align = "center"),
+        numericInput("num", label = NULL, value = 3, min = 1, max = 10, width = "100%"),
+        actionButton("train", "Latih Data", class = "btn btn-success btn-lg btn-block")
+      )
+    )
+  ),
+  
+  hr(),  # Garis horizontal
+  
+  # Bagian hasil clustering
+  fluidRow(
+    column(12, 
+      h3("Hasil Clustering", align = "center"),
+      textOutput("titletable"),
+      tableOutput("table")
+    )
+  ),
+  
+  hr(),  # Garis horizontal
+  
+  # Visualisasi persebaran cluster
+  fluidRow(
+    column(12, 
+      h3("Grafik Persebaran Cluster", align = "center"),
+      textOutput("titlegraph"),
+      plotOutput("graph", height = "400px")
+    )
+  ),
+  
+  hr(),  # Garis horizontal
+  
+  # Ringkasan statistik per cluster
+  fluidRow(
+    column(12, 
+      h3("Ringkasan Statistik Per Cluster", align = "center"),
+      textOutput("titlecluster"),
+      tableOutput("cluster")
+    )
+  )
+)
+
+
+server <- function(input, output, session) {
+  
+  # Render plot metode elbow
+  output$plot <- renderPlot({
+    ggplot(data = elbow_data, aes(x = k, y = wss)) + 
+      geom_line(color = "green", linewidth = 2) + 
+      geom_point(color = "orange", size = 3) + 
+      labs(title = "Elbow Method untuk Menentukan k Optimal",
+           x = "Jumlah Cluster (k)", 
+           y = "Total Within-Cluster Sum of Squares (WSS)")
+  })
+  
+  # Latih model clustering berdasarkan k yang dipilih
+  observeEvent(input$train, {
+    set.seed(123)
+    
+    # Menerapkan K-means clustering dengan jumlah cluster yang dipilih
+    kmeans_result = kmeans(movies_data_scaled, centers = input$num, nstart = 50)
+    
+    # Menambahkan label cluster ke data
+    movies_data_productivity$cluster = as.factor(kmeans_result$cluster)
+    
+    # Menyusun ringkasan statistik per cluster
+    cluster_summary <- movies_data_productivity %>%
+      group_by(cluster) %>%
+      summarise(
+        avg_Gross = mean(Gross),
+        avg_Budget = mean(Budget),
+        avg_Ratings = mean(Ratings),
+        avg_Views = mean(Views),
+        avg_Likes = mean(Likes),
+        avg_Dislikes = mean(Dislikes),
+        avg_Comments = mean(Comments),
+        avg_Aggregate_Followers = mean(`Aggregate Followers`)
+      )
+    
+    # Menampilkan tabel data yang telah diklasterisasi
+    output$titletable <- renderText("Tabel Hasil Clustering Film")
+    output$table <- renderTable({
+      head(movies_data_productivity)
+    })
+    
+    # Menampilkan grafik persebaran cluster
+    output$titlegraph <- renderText("Grafik Persebaran Cluster Berdasarkan Gross dan Budget")
+    output$graph <- renderPlot({
+      ggplot(data = movies_data_productivity, aes(x = Gross, y = Budget, color = cluster)) + 
+        geom_point(size = 3) + 
+        labs(title = "Clustering Film Berdasarkan Gross dan Budget",
+             x = "Gross", y = "Budget")
+    })
+    
+    # Menampilkan ringkasan statistik per cluster
+    output$titlecluster <- renderText("Ringkasan Statistik Per Cluster")
+    output$cluster <- renderTable({
+      cluster_summary
+    })
+  })
+}
+
+# Menjalankan aplikasi shiny
+shinyApp(ui, server)
+
+```
+
